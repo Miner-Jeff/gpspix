@@ -1,8 +1,8 @@
 <html>
 <body>
 <h1>An HTML / Javascript program for browsing large sets of GPS tagged images from phones or Unmanned Aerial Vehicles, on a map.</h1>
-<b>This is my first attempt to clone a repo in Github. Thanks to Mathias Wandel for sharing this code.</b><br>
-More edits to this Read.me ar in order.<b><p><p>
+<b><p>This is my first attempt to clone a repo in Github. Thanks to Mathias Wandel for sharing this code.</b><br></body><p></p>
+More edits to this Read.me are in order.<b><p><p>
 There is also a video about this: <a href="https://youtu.be/D-l51PBAx4I">https://youtu.be/D-l51PBAx4I</a>
 <p>
 You can <a href="https://woodgears.ca/gpspix/index.html"><b>Try it out here</b></a>
