@@ -3,7 +3,7 @@
 HTML with Javascript program for gathering metadata for all images with GPS coordinates
 in them from a directory tree dragged onto the page.
 
-Creates the file 'gpstagged.js' which, using google chrome, gets saved automatically
+Creates the file 'gpstagged.txt' which, using google chrome, gets saved automatically
 but with Firefox must manually be saved to the root directory of the image tree.
 
 by Matthias Wandel, using Google Gemini, September 2026
@@ -91,7 +91,7 @@ by Matthias Wandel, using Google Gemini, September 2026
 
 <div class="card">
     <h1>GPS Image Data Indexer</h1>
-    <p>Scan your photo directories tree to generate the metedata index for browsing your photos on a map</p>
+    <p>Scan your photo directories tree to generate the metadata index for browsing your photos on a map</p>
 
     <div id="setup-view">
         <div id="drop-zone" class="drop-zone">
@@ -217,15 +217,22 @@ async function scanModernDirectory(dirHandle, currentPath = "") {
     if (statusText) statusText.innerText = `Traversing directory branch: ${currentPath || "Root Layout"}`;
     for await (const entry of dirHandle.values()) {
         const relativePath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
-        if (entry.kind === 'directory') {
-            await scanModernDirectory(entry, relativePath);
-        } else if (entry.kind === 'file') {
-            processedFiles++;
-            if (isImageFile(entry.name)) {
-                const file = await entry.getFile();
-                await processImageFile(file, relativePath);
+        try {
+            if (entry.kind === 'directory') {
+                // Skip Windows system folders found at the root of a drive
+                if (entry.name === 'System Volume Information' || entry.name === '$RECYCLE.BIN') continue;
+                await scanModernDirectory(entry, relativePath);
+            } else if (entry.kind === 'file') {
+                processedFiles++;
+                if (isImageFile(entry.name)) {
+                    const file = await entry.getFile();
+                    await processImageFile(file, relativePath);
+                }
+                if (processedFiles % 25 === 0) updateStats();
             }
-            if (processedFiles % 25 === 0) updateStats();
+        } catch (err) {
+            // An unreadable folder or file should not abort the whole scan
+            console.warn('Skipping unreadable item:', relativePath, err);
         }
     }
 }
@@ -406,7 +413,9 @@ async function processHeicFile(file, path) {
 function recordExifData(exifData, path) {
     let block = `${path}\n`;
     block += `Date/Time: ${exifData.dateTime || '2000:01:01 00:00:00'}\n`;
-    block += `GPS: ${exifData.lat.toFixed(7)},${exifData.lon.toFixed(7)}\n`;
+    block += `GPS: ${exifData.lat.toFixed(7)},${exifData.lon.toFixed(7)}`;
+    if (exifData.alt !== null && exifData.alt !== undefined) block += `,alt=${exifData.alt.toFixed(1)}`; // elevation in meters
+    block += `\n`;
     block += `Camera: ${exifData.camera || 'Standard Camera'}\n`;
     outputLines.push(block);
 }
@@ -434,7 +443,7 @@ function parseExif(view, startOffset, length) {
         const ifd0Offset = view.getUint32(tiffHeaderStart + 4, isLittleEndian);
         let currentIfdOffset = tiffHeaderStart + ifd0Offset;
 
-        let metadata = { lat: null, lon: null, dateTime: '', camera: '' };
+        let metadata = { lat: null, lon: null, alt: null, dateTime: '', camera: '' };
         let gpsInfoOffset = null;
         let make = '', model = '';
 
@@ -465,6 +474,7 @@ function parseExif(view, startOffset, length) {
 
                 let latRef = 'N', lonRef = 'E';
                 let latDegrees = null, lonDegrees = null;
+                let altRef = 0, altitude = null; // GPS altitude: tag 5 = 0 above / 1 below sea level, tag 6 = meters
 
                 for (let i = 0; i < numGpsEntries; i++) {
                     if (view.byteLength < gpsPtr + 12) break;
@@ -475,9 +485,20 @@ function parseExif(view, startOffset, length) {
                     if (tag === 2) latDegrees = readRationalTriple(view, tiffHeaderStart + valOffset, isLittleEndian);
                     if (tag === 3) lonRef = String.fromCharCode(view.getUint8(gpsPtr + 8));
                     if (tag === 4) lonDegrees = readRationalTriple(view, tiffHeaderStart + valOffset, isLittleEndian);
+                    if (tag === 5) altRef = view.getUint8(gpsPtr + 8);
+                    if (tag === 6) {
+                        const ao = tiffHeaderStart + valOffset;
+                        if (view.byteLength >= ao + 8) {
+                            const num = view.getUint32(ao, isLittleEndian);
+                            const den = view.getUint32(ao + 4, isLittleEndian);
+                            if (den !== 0) altitude = num / den;
+                        }
+                    }
 
                     gpsPtr += 12;
                 }
+
+                if (altitude !== null && isFinite(altitude)) metadata.alt = (altRef === 1) ? -altitude : altitude;
 
                 if (latDegrees && lonDegrees) {
                     metadata.lat = latDegrees[0] + latDegrees[1]/60 + latDegrees[2]/3600;
@@ -527,7 +548,7 @@ async function finalizeExport() {
     if (isChromium && targetDirectoryHandle) {
         try {
             // Requests/Overwrites file handles natively in location context
-            const fileHandle = await targetDirectoryHandle.getFileHandle('gpstagged.js', { create: true });
+            const fileHandle = await targetDirectoryHandle.getFileHandle('gpstagged.txt', { create: true });
             const writable = await fileHandle.createWritable();
             await writable.write(finalContent);
             await writable.close();
@@ -587,9 +608,10 @@ async function finalizeExport() {
             dynamicView.innerHTML = `
                 <div class="instructions" style="background-color: #d4edda; border-left-color: #28a745; color: #155724;">
                 <strong><big>Completed</big><p>
-                Your <code>gpstagged.js</code> metadata index file has been created and saved to your images directory.</strong>
+                Your <code>gpstagged.txt</code> metadata index file has been created and saved to your images directory.</strong>
                 ${extraNoticeHtml}
                 </div>
+                ${hasGpsHtml ? `<p><a href="gps.html" target="_blank" style="display:inline-block; padding:10px 20px; background:#28a745; color:#fff; border-radius:4px; text-decoration:none; font-weight:bold; font-size:16px;">Open the map (gps.html)</a></p>` : ''}
             `;
 
         } catch (err) {
@@ -602,10 +624,10 @@ async function finalizeExport() {
     }
 }
 function triggerManualDownload(textData) {
-    const blob = new Blob([textData], { type: 'application/javascript;charset=utf-8' });
+    const blob = new Blob([textData], { type: 'text/plain;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = 'gpstagged.js';
+    link.download = 'gpstagged.txt';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -613,12 +635,12 @@ function triggerManualDownload(textData) {
     // Render base dynamic completion UI for Firefox
     dynamicView.innerHTML = `
         <div id="firefox-notice" class="instructions">
-            <strong>Your <code>gpstagged.js</code> metadata index file has been created and put into your downloads folder.  You MUST manually drag/move this file out of your computer's <em>Downloads</em> folder and place it directly into the root of your images folder.  If <code>gpstagged.js</code> has a number behind it such as <code>gpstagged.js(2)</code> rename it back to <code>gpstagged.js</code> in the destination</strong><br><br>
+            <strong>Your <code>gpstagged.txt</code> metadata index file has been created and put into your downloads folder.  You MUST manually drag/move this file out of your computer's <em>Downloads</em> folder and place it directly into the root of your images folder.  If <code>gpstagged.txt</code> has a number behind it such as <code>gpstagged.txt(2)</code> rename it back to <code>gpstagged.txt</code> in the destination</strong><br><br>
 
             <strong>Also ensure that you copied <code>gps.html</code> to the root of your images folder, then click on it.</strong>
 
         </div>
-        <p style="margin-top: 25px; margin-bottom: 25px; color: #7f8c8d;"><em>Note: If you run this metadata indexer from Google Chrome or Microsoft Edge, it can save gpstagged.js to your photo folder automatically</em>
+        <p style="margin-top: 25px; margin-bottom: 25px; color: #7f8c8d;"><em>Note: If you run this metadata indexer from Google Chrome or Microsoft Edge, it can save gpstagged.txt to your photo folder automatically</em>
 
     `;
 
@@ -632,7 +654,7 @@ function triggerManualDownload(textData) {
                 // Error: gps.html is not there yet. Append to the newly generated instructions.
                 const ffNotice = document.getElementById('firefox-notice');
                 if (ffNotice) {
-                    ffNotice.innerHTML += "<br><br><code>gps.html</code> is not yet copied to your photo directory. You still need to manually copy it there alongside your new gpstagged.js file so you can click on it to view your photos on the map.";
+                    ffNotice.innerHTML += "<br><br><code>gps.html</code> is not yet copied to your photo directory. You still need to manually copy it there alongside your new gpstagged.txt file so you can click on it to view your photos on the map.";
                 }
             }
         );

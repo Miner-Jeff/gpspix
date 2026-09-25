@@ -6,7 +6,7 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
 <head>
     <meta charset="UTF-8">
     <title>GPSpix Image Mapper</title>
-    <script src="gpstagged.js"></script>
+    <script src="gpstagged.txt"></script>
     <script src="basemaps/basemaps.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; touch-action: none; }
@@ -46,6 +46,39 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
             display: none; /* Hidden by default */
         }
 
+        #reset-timeline-btn {
+            position: absolute; top: 40px; left: 100px;
+            background: #a00000; color: white;
+            padding: 2px 4px; border-radius: 3px;
+            font-family: sans-serif; font-size: 13px;
+            border: 1px solid white;
+            z-index: 1002; cursor: pointer;
+            pointer-events: auto;
+            display: none; /* Shown only while the timeline is filtered or zoomed in */
+        }
+
+        #elevCanvas { position: absolute; top: 165px; left: 10px; z-index: 1001; display: none; pointer-events: auto; touch-action: none; }
+
+        #lasso-btn { position: absolute; bottom: 12px; left: 12px; z-index: 1002; background: #00a000; color: #fff; border: 1px solid #fff; border-radius: 3px; padding: 4px 10px; font: 14px sans-serif; cursor: pointer; }
+
+        #zoom-all-btn, #zoom-visible-btn {
+            position: absolute; right: 12px; z-index: 1002;
+            background: #00a000; color: #fff; border: 1px solid #fff; border-radius: 3px;
+            padding: 4px 10px; font: 14px sans-serif; cursor: pointer;
+        }
+        #zoom-all-btn { bottom: 12px; }
+        #zoom-visible-btn { bottom: 48px; }
+
+        #satellite-attribution {
+            position: absolute; bottom: 2px; right: 4px; z-index: 999;
+            color: rgba(255,255,255,0.8); font: 11px sans-serif; text-shadow: 0 0 3px #000;
+            pointer-events: none; display: none;
+        }
+        #lassoCanvas { position: absolute; top: 0; left: 0; z-index: 900; display: none; cursor: crosshair; touch-action: none; }
+        #lasso-panel { position: absolute; bottom: 48px; left: 12px; z-index: 1002; display: none; width: 300px; background: rgba(255,255,255,0.95); padding: 10px 12px; border: 1px solid #ccc; box-shadow: 0 4px 15px rgba(0,0,0,0.5); font: 13px sans-serif; color: #111; }
+        #lasso-panel button { margin: 4px 4px 0 0; padding: 4px 8px; font: 13px sans-serif; cursor: pointer; }
+        #lasso-status { margin-top: 6px; line-height: 1.4; }
+
         #preview-img { width: 320px; height: 240px; object-fit: contain; background: #111; border-radius: 4px; cursor: pointer; }
         #info-text { margin-top: 10px; font-size: 13px; color: #111; line-height: 1.5; white-space: pre-wrap; }
         .link-text { cursor: pointer; color: #0056b3; text-decoration: underline; padding: 2px 0; display: inline-block; }
@@ -55,30 +88,41 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
 
 <div id="top-left-overlay">
     <button id="zoom-btn">time zoom in</button>
+    <button id="reset-timeline-btn">Reset timeline</button>
     <canvas id="overlayCanvas" width="400" height="150"></canvas>
     <div id="timeline-hitbox"></div>
 </div>
+
+<canvas id="elevCanvas" width="400" height="108"></canvas>
 
 <div id="ui-overlay">
     <img id="preview-img" alt="Preview">
     <div id="info-text"></div>
 </div>
 
-<a id="map-link" target="_blank" style="
+<button id="satellite-btn" style="
     position: absolute; top: 18px; left: 0;
     background: #00a000; color: white;
     padding: 2px 8px; border-radius: 2px;
-    text-decoration: none; font-family: sans-serif;
+    font-family: sans-serif;
     font-size: 14px; border: 1px solid white;
-    z-index: 500; display: none;
-">Google map</a>
+    z-index: 500; display: none; cursor: pointer;
+">Satellite</button>
+<div id="satellite-attribution">Imagery &copy; Esri, Maxar, Earthstar Geographics</div>
 
 <canvas id="mapCanvas"></canvas>
-
-<div style="position: absolute; bottom: 2px; left: 2px; z-index: 1000; font-family: sans-serif; font-size: 10px; color: white; pointer-events: auto;">
-    Map data from <a href="https://www.openstreetmap.org" style="color: #87cefa; text-decoration: none;">OpenStreetMap</a>
+<canvas id="lassoCanvas"></canvas>
+<button id="lasso-btn">Select area</button>
+<button id="zoom-visible-btn">Zoom to visible photos</button>
+<button id="zoom-all-btn">Zoom to all photos</button>
+<div id="lasso-panel">
+    <b id="lasso-count"></b><br>
+    <button id="lasso-src">1. Source: pick the folder with gps.html</button><br>
+    <button id="lasso-add">Select more photos</button>
+    <button id="lasso-clear">Clear all</button><br>
+    <button id="lasso-copy">2. Destination: copy photos into...</button>
+    <div id="lasso-status"></div>
 </div>
-</body>
 
 <script>
 const canvas = document.getElementById('mapCanvas');
@@ -89,6 +133,8 @@ const infoText = document.getElementById('info-text');
 
 const overlayCanvas = document.getElementById('overlayCanvas');
 const overlayCtx = overlayCanvas.getContext('2d');
+const elevCanvas = document.getElementById('elevCanvas');
+const elevCtx = elevCanvas.getContext('2d');
 
 let images = [];
 let visibleImages = [];
@@ -96,6 +142,9 @@ let clusters = [];
 let selectedImage = null;
 let currentPreview = null;
 let hasUrlCoordinates = false;
+let lassoBoxes = [];    // Each completed selection box, as 4 lat/lon corners, drawn on the map
+let lassoSelected = []; // Photos from all boxes so far, duplicates removed
+let altGlobalMin = Infinity, altGlobalMax = -Infinity; // Elevation range across all images
 
 
 
@@ -150,21 +199,21 @@ function saveView() {
         if (tfEnd) timeUrlPart += Math.floor(overlayUI.filterEndMs / 1000000);
     }
 
+    // --- Process 'e' (Elevation filter, meters; ~ separates min and max) ---
+    if (elevUI.filterMin !== null || elevUI.filterMax !== null) {
+        timeUrlPart += `,e:` + (elevUI.filterMin !== null ? elevUI.filterMin : '') + `~` + (elevUI.filterMax !== null ? elevUI.filterMax : '');
+    }
+
     // Update the browser URL without reloading the page
     const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?" + locValue + timeUrlPart;
     history.replaceState(null, '', newUrl);
 
-    // Update the physical <a> tag  // Location only, no filter data
-    const mapLink = document.getElementById('map-link');
-    if (mapLink) {
-        mapLink.href = `https://www.google.com/maps/${locValue}`;
-    }
 }
 
 // --- DATA LOADING ---
 function initData() {
     baseMap.init(); // Load basemaps
-    // Alert the user if gpstagged.js (containing rawImageData) is missing
+    // Alert the user if gpstagged.txt (containing rawImageData) is missing
     if (typeof rawImageData !== 'undefined') {
         parseData(rawImageData);
 
@@ -191,7 +240,7 @@ function initData() {
 
         updateVisibleData();
     } else {
-        alert("gpstagged.js not found.\nPlease run gathergps.html and copy gpstagged.js to the root of your images directory, same directory as gps.html");
+        alert("gpstagged.txt not found.\nPlease run gathergps.html and copy gpstagged.txt to the root of your images directory, same directory as gps.html");
     }
 }
 
@@ -210,9 +259,11 @@ function parseData(text) {
 
         let gl = (lines[++i] || "");
         let cl = (lines[++i] || "").replace('Camera: ', '').trim();
-        const m = gl.match(/GPS:\s*([\d.-]+),\s*([\d.-]+)/);
+        const m = gl.match(/GPS:\s*([\d.-]+),\s*([\d.-]+)(?:,\s*alt=(-?[\d.]+))?/);
 
         if (m) {
+            const altVal = (m[3] !== undefined && isFinite(parseFloat(m[3]))) ? parseFloat(m[3]) : null;
+            if (altVal !== null) { if (altVal < altGlobalMin) altGlobalMin = altVal; if (altVal > altGlobalMax) altGlobalMax = altVal; }
             // Build the element clearly before pushing
             let imageElement = {
                 path: path,
@@ -220,6 +271,7 @@ function parseData(text) {
                 lat: parseFloat(m[1]),
                 lon: parseFloat(m[2]),
                 camera: cl || "Unknown",
+                alt: altVal,
                 hl: 0
             };
             images.push(imageElement);
@@ -415,6 +467,8 @@ const baseMap_OpenStreetMaps = {
         // If you plan on using this a lot or re-publish a modified version,
         // please get your own free API key at https://carto.com/basemaps/apikey/
         let apiKey = "?key=cb1_28qx_1_a0c46e683e2c956617413463"
+        // ?key=cb1_28qx_1_a0c46e683e2c956617413463 new
+        // OLD ?key=cb1_3vl4_1_daf611a0c786d6b469524f1d
         let baseURL = "https://basemaps.cartocdn.com/rastertiles/"
 
         for (let x = minTileX; x <= maxTileX; x++) {
@@ -456,6 +510,72 @@ const baseMap_OpenStreetMaps = {
 
         ctx.restore(); // Restores context to full fidelity for UI overlays and data dots
     }};
+
+
+
+const baseMap_Satellite = {
+// Satellite imagery basemap. Uses Esri's free World Imagery tile service rather than
+// Google's raw map tiles, since pulling Google's tiles directly (outside their JS API)
+// is against Google's terms of service. Esri's service is designed for exactly this
+// kind of direct, no-API-key tile access, and just asks for the attribution shown on screen.
+    tileCache: new Map(),
+
+    init() { console.log("Satellite imagery (Esri World Imagery) provider initialized."); },
+
+    lon2tile: baseMap_OpenStreetMaps.lon2tile,
+    lat2tile: baseMap_OpenStreetMaps.lat2tile,
+    tile2lon: baseMap_OpenStreetMaps.tile2lon,
+    tile2lat: baseMap_OpenStreetMaps.tile2lat,
+
+    draw() {
+        const zoom = Math.max(0, Math.min(19, Math.round(Math.log2(180 / view.latHeight))));
+
+        const topLeftGeo = xy2latLon(0, 0);
+        const bottomRightGeo = xy2latLon(canvas.width, canvas.height);
+
+        const minTileX = this.lon2tile(topLeftGeo.lon, zoom);
+        const maxTileX = this.lon2tile(bottomRightGeo.lon, zoom);
+        const minTileY = this.lat2tile(topLeftGeo.lat, zoom);
+        const maxTileY = this.lat2tile(bottomRightGeo.lat, zoom);
+
+        ctx.save();
+
+        // Esri's tile REST endpoint takes {level}/{row}/{column}, i.e. z/y/x (not z/x/y)
+        const baseURL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+
+        for (let x = minTileX; x <= maxTileX; x++) {
+            for (let y = minTileY; y <= maxTileY; y++) {
+                const tileKey = `${zoom},${x},${y}`;
+                let img = this.tileCache.get(tileKey);
+
+                if (!img) {
+                    img = new Image();
+                    img.crossOrigin = "Anonymous";
+                    img.src = baseURL + `${zoom}/${y}/${x}`;
+                    img.addEventListener('load', () => { draw(); }, { once: true });
+                    this.tileCache.set(tileKey, img);
+                }
+
+                if (img.complete && img.naturalWidth !== 0) {
+                    const tileMaxLat = this.tile2lat(y, zoom);
+                    const tileMinLat = this.tile2lat(y + 1, zoom);
+                    const tileMinLon = this.tile2lon(x, zoom);
+                    const tileMaxLon = this.tile2lon(x + 1, zoom);
+
+                    const screenTopLeft = latLon2xy(tileMaxLat, tileMinLon);
+                    const screenBottomRight = latLon2xy(tileMinLat, tileMaxLon);
+
+                    const tileW = screenBottomRight.x - screenTopLeft.x;
+                    const tileH = screenBottomRight.y - screenTopLeft.y;
+
+                    ctx.drawImage(img, screenTopLeft.x, screenTopLeft.y, tileW, tileH);
+                }
+            }
+        }
+
+        ctx.restore();
+    }
+};
 
 
 
@@ -603,6 +723,18 @@ if (typeof BasemapsDir !== 'undefined' && BasemapsDir) {
 }else{
     baseMap = baseMap_OpenStreetMaps
 }
+let nonSatelliteBaseMap = baseMap; // remembered so the Satellite button can toggle back to it
+let satelliteOn = false;
+
+document.getElementById('satellite-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    satelliteOn = !satelliteOn;
+    baseMap = satelliteOn ? baseMap_Satellite : nonSatelliteBaseMap;
+    document.getElementById('satellite-btn').textContent = satelliteOn ? 'Street map' : 'Satellite';
+    document.getElementById('satellite-attribution').style.display = satelliteOn ? 'block' : 'none';
+    baseMap.init();
+    draw();
+});
 
 
 // --- DRAWING & CLUSTERING ---
@@ -635,26 +767,21 @@ function updateVisibleData() {
     let endIndex = findFirstLongitudeIndex(maxLon);
     if (endIndex < images.length) endIndex += 1;
 
-    visibleImages = [];
+    // Everything inside the map view
+    const viewImgs = [];
     for (let i = startIndex; i < endIndex; i++) {
         const img = images[i];
-        // Filter by Latutude (already have looping over right longitude range)
-        if (img.lat >= minLat && img.lat <= maxLat) {
-            visibleImages.push(img);
-        }
+        if (img.lat >= minLat && img.lat <= maxLat) viewImgs.push(img);
     }
 
-    // Provide list without temoral filtering for purpsoe of histogram ot overlayUI
-    overlayUI.updateTimeline(visibleImages);
-
-    // Next apply temporal filtering.
-    let temporalVisible = []
-    for (let img of visibleImages) {
-        if (img.timeMs >= overlayUI.filterStartMs && img.timeMs <= overlayUI.filterEndMs) {
-            temporalVisible.push(img)
-        }
-    }
-    visibleImages = temporalVisible
+    // Time and elevation filters each feed the OTHER histogram, and both apply to what is shown.
+    const timeOk = img => img.timeMs >= overlayUI.filterStartMs && img.timeMs <= overlayUI.filterEndMs;
+    elevUI.setRange(viewImgs);
+    const elevFiltered = viewImgs.filter(img => elevUI.passes(img));
+    const timeFiltered = viewImgs.filter(timeOk);
+    overlayUI.updateTimeline(viewImgs, elevFiltered);
+    elevUI.updateBins(timeFiltered);
+    visibleImages = elevFiltered.filter(timeOk);
 
     const latRad = view.lat * Math.PI / 180;
     const pixelsPerMeter = canvas.height / (view.latHeight * 111120);
@@ -792,7 +919,39 @@ function updateVisibleData() {
 
     draw();
     overlayUI.draw();
+    elevUI.draw();
 }
+
+// Photos passing the current time + elevation filters, regardless of the current pan/zoom
+function getFilteredImages() {
+    const timeOk = img => img.timeMs >= overlayUI.filterStartMs && img.timeMs <= overlayUI.filterEndMs;
+    return images.filter(img => timeOk(img) && elevUI.passes(img));
+}
+
+// Pan/zoom the map so all of the given photos are in view, with a bit of padding
+function fitViewToImages(imgs) {
+    if (!imgs || imgs.length === 0) return;
+    let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+    for (const img of imgs) {
+        if (img.lat < minLat) minLat = img.lat;
+        if (img.lat > maxLat) maxLat = img.lat;
+        if (img.lon < minLon) minLon = img.lon;
+        if (img.lon > maxLon) maxLon = img.lon;
+    }
+    view.lat = (minLat + maxLat) / 2;
+    view.lon = (minLon + maxLon) / 2;
+
+    const pad = 1.15; // 15% padding so points aren't right at the screen edge
+    const latSpan = Math.max(0.0008, (maxLat - minLat) * pad); // minimum keeps a single photo from zooming in forever
+    const lonSpan = Math.max(0.0008, (maxLon - minLon) * pad);
+    const latHeightForLon = lonSpan * Math.cos(view.lat * Math.PI / 180) * (window.innerHeight / window.innerWidth);
+    view.latHeight = Math.max(latSpan, latHeightForLon);
+
+    updateVisibleData();
+}
+
+document.getElementById('zoom-all-btn').addEventListener('click', e => { e.stopPropagation(); fitViewToImages(images); });
+document.getElementById('zoom-visible-btn').addEventListener('click', e => { e.stopPropagation(); fitViewToImages(getFilteredImages()); });
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -835,6 +994,26 @@ function draw() {
             ctx.beginPath(); ctx.arc(currentPreview.x, currentPreview.y, 9, 0, Math.PI * 2); ctx.stroke();
         }
         ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(currentPreview.x, currentPreview.y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    if (lassoSelected.length > 0) {  // Mark each selected photo individually
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgba(255, 220, 0, 0.95)'; ctx.strokeStyle = 'rgba(90, 70, 0, 0.9)'; ctx.lineWidth = 1.5;
+        lassoSelected.forEach(img => {
+            ctx.beginPath(); ctx.arc(img.x, img.y, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        });
+    }
+
+    if (lassoBoxes.length > 0) {  // Outline of every selection box made so far
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = 'rgba(255, 220, 0, 0.95)'; ctx.fillStyle = 'rgba(255, 220, 0, 0.12)'; ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        lassoBoxes.forEach(poly => {
+            ctx.beginPath();
+            poly.forEach((pt, i) => { const q = latLon2xy(pt.lat, pt.lon); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); });
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+        });
+        ctx.setLineDash([]);
     }
 
     ctx.restore();
@@ -915,7 +1094,8 @@ const overlayUI = {
     timeSpan: 31536000000, // Default value 1 year of miliseconds
 
 
-    updateTimeline: function(images) {
+    updateTimeline: function(images, binImages) {
+        binImages = binImages || images; // Histogram bars can use a narrower set than the axis range
         // Update histogram based on new set of visible images.
         this.bins.fill(0);
         this.maxBinValue = 0;
@@ -948,12 +1128,13 @@ const overlayUI = {
 
         // Now bin the data.
         let maxBinValue = 0
-        for (let img of images) {
+        for (let img of binImages) {
             let index = Math.floor(((img.timeMs - this.startMs) / this.timeSpan) * this.numBins);
             if (index < 0 || index >= this.numBins) continue
             this.bins[index]++;
             if (this.bins[index] > maxBinValue) maxBinValue = this.bins[index];
         }
+        if (maxBinValue === 0 && images.length > 0) maxBinValue = 1; // keep the time bar visible if a filter hides everything
         this.maxBinValue = maxBinValue;
     },
 
@@ -1000,10 +1181,15 @@ const overlayUI = {
 
     updateZoomButton: function() {
         const zoomBtn = document.getElementById('zoom-btn');
-        if (!zoomBtn) return;
+        const resetBtn = document.getElementById('reset-timeline-btn');
 
         // Check if temporal filtering is currently active
         const isFiltered = this.filterStartMs > startOfTimeMs || this.filterEndMs < endOfTimeMs;
+        const isZoomedIn = this.lockedStartMs !== null || this.lockedEndMs !== null;
+
+        if (resetBtn) resetBtn.style.display = (isFiltered || isZoomedIn) ? 'block' : 'none';
+
+        if (!zoomBtn) return;
 
         if (!isFiltered) {
             zoomBtn.style.display = 'none';
@@ -1269,6 +1455,7 @@ const overlayUI = {
         this.selectedTimeMs = ms;
         this.drawHistogram();
         this.drawScaleBar();
+        elevUI.draw();
     },
 
     seekImageFromX: function(mouseX) {
@@ -1311,12 +1498,12 @@ const overlayUI = {
         overlayCtx.textAlign = "center"; overlayCtx.fillText(label, x + (barWidth / 2), y - 15);
 
 
-        // Position the HTML anchor tag dynamically
-        const mapLink = document.getElementById('map-link');
-        if (mapLink) {
-            mapLink.style.left = "330px";
-            mapLink.style.top = "25px"
-            mapLink.style.display = 'block'; // Show it once calculated
+        // Position the satellite toggle button dynamically, next to the scale bar
+        const satBtn = document.getElementById('satellite-btn');
+        if (satBtn) {
+            satBtn.style.left = "330px";
+            satBtn.style.top = "25px"
+            satBtn.style.display = 'block'; // Show it once calculated
         }
 
         overlayCtx.restore();
@@ -1329,6 +1516,346 @@ const overlayUI = {
         this.updateZoomButton();
     }
 };
+
+// --- ELEVATION FILTER: histogram + two range handles, drawn below the time bar ---
+const elevUI = {
+    numBins: 64,
+    bins: new Array(64).fill(0),
+    maxBinValue: 0,
+    axisMin: 0, axisMax: 100, step: 20, // Meters at the left/right ends of the scale, and tick spacing
+    filterMin: null, filterMax: null,   // null = no limit on that end
+    numInScope: 0,   // Images in view that pass the time filter
+    numNoAlt: 0,     // Of those, how many have no elevation
+    histLeft: 10, histWidth: 380, histBottom: 60, histHeight: 45,
+    startX: 10, endX: 390,
+
+    isFiltered: function() { return this.filterMin !== null || this.filterMax !== null; },
+
+    passes: function(img) {
+        if (!this.isFiltered()) return true;
+        if (img.alt === null) return false; // No elevation data: hidden while an elevation filter is active
+        if (this.filterMin !== null && img.alt < this.filterMin) return false;
+        if (this.filterMax !== null && img.alt > this.filterMax) return false;
+        return true;
+    },
+
+    niceStep: function(x) {
+        const mag = Math.pow(10, Math.floor(Math.log10(x)));
+        const r = x / mag;
+        return (r <= 1.5 ? 1 : r <= 3.5 ? 2 : r <= 7.5 ? 5 : 10) * mag;
+    },
+
+    setRange: function(imgs) {
+        let lo = Infinity, hi = -Infinity;
+        for (const img of imgs) {
+            if (img.alt === null) continue;
+            if (img.alt < lo) lo = img.alt;
+            if (img.alt > hi) hi = img.alt;
+        }
+        if (lo > hi) { lo = altGlobalMin; hi = altGlobalMax; } // nothing with elevation in view: use overall range
+        if (!(lo <= hi)) return;
+        if (hi - lo < 20) { const mid = (lo + hi) / 2; lo = mid - 10; hi = mid + 10; }
+        this.step = this.niceStep((hi - lo) / 4);
+        this.axisMin = Math.floor(lo / this.step) * this.step;
+        this.axisMax = Math.ceil(hi / this.step) * this.step;
+    },
+
+    updateBins: function(imgs) {
+        this.bins.fill(0);
+        this.maxBinValue = 0;
+        this.numInScope = imgs.length;
+        this.numNoAlt = 0;
+        const span = this.axisMax - this.axisMin;
+        for (const img of imgs) {
+            if (img.alt === null) { this.numNoAlt++; continue; }
+            let i = Math.floor((img.alt - this.axisMin) / span * this.numBins);
+            if (i === this.numBins) i--;
+            if (i < 0 || i >= this.numBins) continue;
+            if (++this.bins[i] > this.maxBinValue) this.maxBinValue = this.bins[i];
+        }
+    },
+
+    setFilterFromX: function(drag, mouseX) {
+        const span = this.axisMax - this.axisMin;
+        const ratio = Math.min(1, Math.max(0, (mouseX - this.histLeft) / this.histWidth));
+        const target = this.axisMin + ratio * span;
+        const gap = span * 0.03;
+        if (drag === 'start') {
+            const v = Math.min(target, (this.filterMax === null ? this.axisMax : this.filterMax) - gap);
+            this.filterMin = (v <= this.axisMin + span * 0.02) ? null : Math.round(v); // snap to "no limit"
+        } else {
+            const v = Math.max(target, (this.filterMin === null ? this.axisMin : this.filterMin) + gap);
+            this.filterMax = (v >= this.axisMax - span * 0.02) ? null : Math.round(v);
+        }
+    },
+
+    draw: function() {
+        if (!(altGlobalMin <= altGlobalMax)) { elevCanvas.style.display = 'none'; return; } // no elevation data
+        elevCanvas.style.display = 'block';
+        const c = elevCtx, span = this.axisMax - this.axisMin;
+        const xOf = v => this.histLeft + (v - this.axisMin) / span * this.histWidth;
+        const clampX = x => Math.min(Math.max(x, this.histLeft), this.histLeft + this.histWidth);
+        const base = this.histBottom;
+        c.clearRect(0, 0, elevCanvas.width, elevCanvas.height);
+
+        this.startX = this.filterMin === null ? this.histLeft : clampX(xOf(this.filterMin));
+        this.endX = this.filterMax === null ? this.histLeft + this.histWidth : clampX(xOf(this.filterMax));
+
+        // Bars (orange, to tell them apart from the time bars)
+        const barW = this.histWidth / this.numBins;
+        for (let i = 0; i < this.numBins; i++) {
+            if (this.bins[i] === 0) continue;
+            const cx = this.histLeft + i * barW + barW / 2;
+            c.fillStyle = (cx >= this.startX && cx <= this.endX) ? 'rgba(255, 190, 110, 1)' : 'rgba(255, 190, 110, 0.5)';
+            const h = Math.max(2, this.bins[i] / this.maxBinValue * this.histHeight);
+            c.fillRect(this.histLeft + i * barW, base - 2 - h, barW, h);
+        }
+
+        // Baseline, ticks and labels
+        c.strokeStyle = 'white'; c.fillStyle = 'white'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(this.histLeft, base); c.lineTo(this.histLeft + this.histWidth, base); c.stroke();
+        c.font = '12px sans-serif'; c.textBaseline = 'top';
+        for (let v = this.axisMin; v <= this.axisMax + this.step * 0.001; v += this.step) {
+            const x = xOf(v);
+            c.beginPath(); c.moveTo(x, base); c.lineTo(x, base + 4); c.stroke();
+            c.textAlign = (v <= this.axisMin) ? 'left' : (v + this.step > this.axisMax + this.step * 0.001 ? 'right' : 'center');
+            c.fillText(Math.round(v).toLocaleString() + ' m', x, base + 12);
+        }
+
+        // Red mark for the selected photo's elevation
+        const sel = (overlayUI.selectedTimeMs > 0 && currentPreview) ? currentPreview : null;
+        if (sel && sel.alt !== null && sel.alt >= this.axisMin && sel.alt <= this.axisMax) {
+            const x = xOf(sel.alt);
+            c.strokeStyle = 'rgba(255, 120, 120, 1)'; c.lineWidth = 3;
+            c.beginPath(); c.moveTo(x, base + 10); c.lineTo(x, base - 2); c.stroke();
+        }
+
+        // Green handles
+        const handle = x => {
+            c.fillStyle = '#00ff00'; c.strokeStyle = 'white'; c.lineWidth = 1;
+            c.beginPath();
+            c.moveTo(x, base - 3); c.lineTo(x + 2.5, base); c.lineTo(x + 2.5, base + 9);
+            c.lineTo(x - 2.5, base + 9); c.lineTo(x - 2.5, base);
+            c.closePath(); c.fill(); c.stroke();
+        };
+        handle(this.startX); handle(this.endX);
+
+        // Status text
+        let t;
+        if (!this.isFiltered()) {
+            t = 'drag green pointers to filter by elevation';
+            if (this.numNoAlt > 0) t += '  (' + this.numNoAlt + ' lack elevation)';
+        } else {
+            const f = v => Math.round(v).toLocaleString() + ' m';
+            if (this.filterMin === null) t = f(this.filterMax) + ' or below:';
+            else if (this.filterMax === null) t = f(this.filterMin) + ' and above:';
+            else t = f(this.filterMin) + ' -- ' + f(this.filterMax);
+            t += '     ' + visibleImages.length + ' of ' + this.numInScope + ' shown';
+        }
+        c.fillStyle = 'white'; c.font = 'italic 13px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'top';
+        c.fillText(t, 0, 88);
+    }
+};
+
+let activeElevDrag = null;
+const elevPointerX = e => e.clientX - elevCanvas.getBoundingClientRect().left;
+const nearestElevHandle = x => {
+    const ds = Math.abs(x - elevUI.startX), de = Math.abs(x - elevUI.endX);
+    return Math.min(ds, de) < 12 ? (ds <= de ? 'start' : 'end') : null;
+};
+elevCanvas.addEventListener('pointerdown', e => {
+    activeElevDrag = nearestElevHandle(elevPointerX(e));
+    if (activeElevDrag) elevCanvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+});
+elevCanvas.addEventListener('pointermove', e => {
+    const x = elevPointerX(e);
+    if (activeElevDrag) { elevUI.setFilterFromX(activeElevDrag, x); updateVisibleData(); }
+    else elevCanvas.style.cursor = nearestElevHandle(x) ? 'ew-resize' : 'default';
+});
+['pointerup', 'pointercancel'].forEach(t => elevCanvas.addEventListener(t, () => { activeElevDrag = null; }));
+elevCanvas.addEventListener('dblclick', () => { elevUI.filterMin = null; elevUI.filterMax = null; updateVisibleData(); }); // reset
+
+// --- WINDOW (BOX) SELECT + COPY THE SELECTED PHOTOS TO A FOLDER ---
+const lassoBtn = document.getElementById('lasso-btn');
+const lassoCanvas = document.getElementById('lassoCanvas');
+const lassoCtx = lassoCanvas.getContext('2d');
+const lassoPanel = document.getElementById('lasso-panel');
+let lassoActive = false, lassoPts = [], lassoCopying = false;
+let lassoSrcHandle = null; // Photo folder (the one holding gps.html); chosen by the user once per session
+
+function pointInPoly(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        if ((poly[i].y > y) !== (poly[j].y > y) &&
+            x < (poly[j].x - poly[i].x) * (y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x) inside = !inside;
+    }
+    return inside;
+}
+
+function updateLassoPanel(msg) {
+    lassoPanel.style.display = 'block';
+    const n = lassoSelected.length;
+    document.getElementById('lasso-count').textContent = n === 0 ? 'No photos selected yet' : n + (n === 1 ? ' photo selected total' : ' photos selected total');
+    document.getElementById('lasso-src').textContent = lassoSrcHandle ? '1. Source: ' + lassoSrcHandle.name + ' (OK)' : '1. Source: pick the folder with gps.html';
+    document.getElementById('lasso-copy').disabled = (n === 0 || lassoCopying);
+    document.getElementById('lasso-status').textContent = msg ||
+        'Step 1 (once per session): pick the SOURCE folder — the one that already contains gps.html and your photos. Draw a box, then use "Select more photos" to add another box. Step 2 is the DESTINATION you\'re copying into.';
+}
+
+function clearLasso() {
+    lassoBoxes = []; lassoSelected = [];
+    lassoPanel.style.display = 'none';
+    draw();
+}
+
+function setLassoMode(on) {
+    lassoActive = on;
+    lassoPts = [];
+    lassoBtn.textContent = on ? 'Cancel' : (lassoSelected.length > 0 ? 'Select more photos' : 'Select area');
+    lassoCanvas.style.display = on ? 'block' : 'none';
+    if (on) {
+        lassoCanvas.width = window.innerWidth; lassoCanvas.height = window.innerHeight;
+        if (lassoSelected.length === 0) { lassoBoxes = []; lassoPanel.style.display = 'none'; draw(); } // first box: nothing to keep yet
+    }
+}
+
+lassoBtn.addEventListener('click', e => { e.stopPropagation(); setLassoMode(!lassoActive); });
+document.getElementById('lasso-add').addEventListener('click', e => { e.stopPropagation(); setLassoMode(true); });
+
+lassoCanvas.addEventListener('pointerdown', e => {
+    lassoPts = [{ x: e.clientX, y: e.clientY }];
+    lassoCanvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+});
+lassoCanvas.addEventListener('pointermove', e => {
+    if (lassoPts.length === 0) return;
+    lassoPts[1] = { x: e.clientX, y: e.clientY };  // Corner opposite the starting point
+    const a = lassoPts[0], b = lassoPts[1];
+    lassoCtx.clearRect(0, 0, lassoCanvas.width, lassoCanvas.height);
+    lassoCtx.fillStyle = 'rgba(255, 220, 0, 0.12)';
+    lassoCtx.strokeStyle = 'rgba(255, 220, 0, 0.95)'; lassoCtx.lineWidth = 2;
+    lassoCtx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    lassoCtx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+});
+lassoCanvas.addEventListener('pointerup', () => {
+    const pts = lassoPts;
+    setLassoMode(false);
+    if (pts.length < 2 || Math.abs(pts[1].x - pts[0].x) < 5 || Math.abs(pts[1].y - pts[0].y) < 5) return; // Too small
+    const x1 = Math.min(pts[0].x, pts[1].x), x2 = Math.max(pts[0].x, pts[1].x);
+    const y1 = Math.min(pts[0].y, pts[1].y), y2 = Math.max(pts[0].y, pts[1].y);
+    const corners = [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }];
+    lassoBoxes.push(corners.map(pt => xy2latLon(pt.x, pt.y)));
+    const newlyInBox = visibleImages.filter(img => { const q = latLon2xy(img.lat, img.lon); return q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2; });
+    const already = new Set(lassoSelected.map(img => img.path)); // dedupe: a photo already selected isn't added again
+    newlyInBox.forEach(img => { if (!already.has(img.path)) { lassoSelected.push(img); already.add(img.path); } });
+    draw();
+    updateLassoPanel();
+});
+
+document.getElementById('lasso-clear').addEventListener('click', clearLasso);
+window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { if (lassoActive) setLassoMode(false); else clearLasso(); }
+});
+
+document.getElementById('lasso-src').addEventListener('click', async () => {
+    if (!window.showDirectoryPicker) { updateLassoPanel('Copying needs Chrome or Edge.'); return; }
+    try {
+        lassoSrcHandle = await window.showDirectoryPicker({ id: 'gpspix-photos', mode: 'read' });
+        updateLassoPanel();
+    } catch (err) { /* cancelled */ }
+});
+
+async function lassoGetFile(img) {
+    const parts = img.path.replace(/\\/g, '/').split('/').filter(part => part && part !== '.');
+    let dir = lassoSrcHandle;
+    let parentLabel = lassoSrcHandle.name;
+
+    const listChildren = async (dirHandle, kind) => {
+        const names = [];
+        for await (const [childName, handle] of dirHandle.entries()) {
+            if (handle.kind === kind) names.push(childName);
+            if (names.length >= 8) break;
+        }
+        return names;
+    };
+
+    for (let i = 0; i < parts.length - 1; i++) {
+        const name = parts[i];
+        let next;
+        try {
+            next = await dir.getDirectoryHandle(name);
+        } catch (err) {
+            // Exact name failed. Try a case/whitespace-insensitive match, in case the
+            // folder was renamed slightly (capitalization, extra space) since scanning.
+            for await (const [childName, handle] of dir.entries()) {
+                if (handle.kind === 'directory' && childName.trim().toLowerCase() === name.trim().toLowerCase()) { next = handle; break; }
+            }
+        }
+        if (!next) {
+            const found = await listChildren(dir, 'directory');
+            throw new Error(`Could not find folder "${name}" inside "${parentLabel}". Folders actually there: ${found.length ? found.map(n => '"' + n + '"').join(', ') : '(none)'}.`);
+        }
+        dir = next;
+        parentLabel = name;
+    }
+
+    const fileName = parts[parts.length - 1];
+    try {
+        return (await dir.getFileHandle(fileName)).getFile();
+    } catch (err) {
+        for await (const [childName, handle] of dir.entries()) {
+            if (handle.kind === 'file' && childName.trim().toLowerCase() === fileName.trim().toLowerCase()) return handle.getFile();
+        }
+        const found = await listChildren(dir, 'file');
+        throw new Error(`Could not find file "${fileName}" inside "${parentLabel}". Files actually there: ${found.length ? found.map(n => '"' + n + '"').join(', ') : '(none)'}.`);
+    }
+}
+
+document.getElementById('lasso-copy').addEventListener('click', async () => {
+    if (lassoCopying || lassoSelected.length === 0) return;
+    if (!window.showDirectoryPicker) { updateLassoPanel('Copying needs Chrome or Edge.'); return; }
+    if (!lassoSrcHandle) { updateLassoPanel('Click "1. Source" first, and pick the folder that already contains gps.html and your photos (not the destination folder).'); return; }
+
+    // Check that the chosen photo folder really holds the photos before asking for a destination
+    try { await lassoGetFile(lassoSelected[0]); }
+    catch (err) { updateLassoPanel(err.message + ' Make sure "1. Source" points at the folder that already contains gps.html and your original photos — not the destination folder. If a folder was genuinely renamed since scanning, rescan with gathergps.html.'); return; }
+
+    let dst;
+    try { dst = await window.showDirectoryPicker({ id: 'gpspix-dest', mode: 'readwrite' }); }
+    catch (err) { return; } // cancelled, or the browser refused that folder
+
+    lassoCopying = true;
+    const used = new Set();
+    for await (const name of dst.keys()) used.add(name.toLowerCase()); // never overwrite existing files
+    const uniqueName = name => {
+        const dot = name.lastIndexOf('.');
+        const base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+        let n = name, k = 1;
+        while (used.has(n.toLowerCase())) n = base + '_' + (k++) + ext;
+        used.add(n.toLowerCase());
+        return n;
+    };
+
+    let ok = 0, failed = 0;
+    for (let i = 0; i < lassoSelected.length; i++) {
+        updateLassoPanel('Copying ' + (i + 1) + ' of ' + lassoSelected.length + '...');
+        try {
+            const file = await lassoGetFile(lassoSelected[i]);
+            const out = await dst.getFileHandle(uniqueName(file.name), { create: true });
+            const w = await out.createWritable();
+            await w.write(file);
+            await w.close();
+            ok++;
+        } catch (err) {
+            failed++;
+            console.warn('Could not copy', lassoSelected[i].path, err);
+        }
+    }
+    lassoCopying = false;
+    updateLassoPanel('Copied ' + ok + ' of ' + lassoSelected.length + ' photos to "' + dst.name + '".' +
+        (failed ? ' ' + failed + ' could not be copied (see the browser console).' : ''));
+});
 
 function updateOverlay(img) {
 // Update selected or hovered over image thumbnail and info in top right of screen.
@@ -1393,6 +1920,7 @@ function updateOverlay(img) {
     addLink(`GPS: ${img.lat.toFixed(6)}, ${img.lon.toFixed(6)}`, () => {
         window.open(`https://www.google.com/maps?q=${img.lat},${img.lon}`, '_blank');
     });
+    if (img.alt !== null) infoText.appendChild(document.createTextNode(`\nElevation: ${Math.round(img.alt)} m`));
     infoText.appendChild(document.createTextNode(`\nCamera: ${img.camera}`));
 
     // Also update the histogram
@@ -1608,9 +2136,9 @@ canvas.addEventListener('wheel', e => {
 
     let newHeight = view.latHeight * (e.deltaY > 0 ? 1.1 : 0.9);
 
-    const minHeight = 3 / 111120; // 3 m min height
-    const maxHeight = 5000000 / 111120; // 500 km max height
-    updateLatScale(Math.max(Math.min(newHeight,maxHeight), minHeight));
+    // Clamp to 3 meters vertical height
+    const minHeight = 3 / 111120;
+    updateLatScale(Math.max(newHeight, minHeight));
 
     const a = xy2latLon(e.clientX, e.clientY);
     view.lon += (b.lon - a.lon);
@@ -1748,6 +2276,16 @@ document.getElementById('zoom-btn').addEventListener('click', (e) => {
     }
 });
 
+document.getElementById('reset-timeline-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    overlayUI.filterStartMs = startOfTimeMs;
+    overlayUI.filterEndMs = endOfTimeMs;
+    overlayUI.lockedStartMs = null;
+    overlayUI.lockedEndMs = null;
+    overlayUI.markersMovedSinceZoom = false;
+    updateVisibleData();
+});
+
 
 function parseUrlParameters() {
     const search = window.location.search;
@@ -1779,6 +2317,12 @@ function parseUrlParameters() {
     if (fMatch) {
         if (fMatch[1]) overlayUI.filterStartMs = parseInt(fMatch[1], 10) * 1000000;
         if (fMatch[2]) overlayUI.filterEndMs = parseInt(fMatch[2], 10) * 1000000;
+    }
+
+    const eMatch = search.match(/,e:(-?\d*)~(-?\d*)/);
+    if (eMatch) {
+        if (eMatch[1]) elevUI.filterMin = parseInt(eMatch[1], 10);
+        if (eMatch[2]) elevUI.filterMax = parseInt(eMatch[2], 10);
     }
 
     updateLatScale(view.latHeight);
