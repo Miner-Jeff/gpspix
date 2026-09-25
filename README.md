@@ -1,19 +1,20 @@
 <html>
 <body>
 <h1>An HTML / Javascript program for browsing large sets of GPS tagged images from phones, on a map.</h1>
-
-There is also a video about this: <a href="https://youtu.be/D-l51PBAx4I">https://youtu.be/D-l51PBAx4I</a>
+This is my first attempt at cloning a Github repository.<p>
+  <b>Hats off to Mathias Wandel for sharing his project.</b><br>
+<p>  
+Mathias has a video about the program here: <a href="https://youtu.be/D-l51PBAx4I">https://youtu.be/D-l51PBAx4I</a>
 <p>
-You can <a href="https://woodgears.ca/gpspix/index.html"><b>Try it out here</b></a>
 <p>
-I like how phones can show heatmaps of where photos were taken on a map, but my photo collection on my PC encompasses photos from many devices.  I wanted to be able to browse photos by location on my PC, so I created this program.
-I started by challenging AI (Google Gemini) to write such a program.  Over several months I have refined it and added features, mostly by requesting specific changes to the code and inspecting and tweaking the resulting code.
+He likes how phones can show heatmaps of where photos were taken on a map, but my photo collection on my PC encompasses photos from many devices.  I wanted to be able to browse photos by location on my PC, so I created this program.
+He started by challenging AI (Google Gemini) to write such a program.  Over several months he has refined it and added features, mostly by requesting specific changes to the code and inspecting and tweaking the resulting code.
 <p>
 The program is intended to be run locally on your computer, all you need is the "gps.html" and "gathergps.html" files and place them into the root directory of your photo collection.
 <p>
 Scanning  thousands of files every time gps.html is opened would take very long.  Instead gps.html loads a file 'gpstagged.js' containing pre-gathered metadata for all images.  This file is created by 'gathergps.html'.  Due to various security limitations of html / javascript, gathergps.html needs you to browse to the root of your image tree.  After gathering all the metadata, it will create 'gpstagged.js" in your downloads folder.  You must then move this file to the root images directory, same directory as gps.html
 <p>
-For my own photo collection of 160,000 photos, only 10% have GPS coordinates, and I use a script "gathergps.py", but this python script assumes the files are organized the way they are on my computer.
+For Mathias' own photo collection of 160,000 photos, only 10% have GPS coordinates, and he uses a script "gathergps.py", but this python script assumes the files are organized the way they are on my computer.
 <p>
 
 <b>Typical view of GPSpix</b><br>
