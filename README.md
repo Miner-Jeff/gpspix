@@ -1,6 +1,6 @@
 <html>
 <body>
-<h1>An HTML / Javascript program for browsing large sets of GPS tagged images from phones, on a map.</h1>
+<h1>An HTML / Javascript program for browsing large sets of GPS tagged images from phones or Aerial Unmanned Vehicles, on a map.</h1>
 
 There is also a video about this: <a href="https://youtu.be/D-l51PBAx4I">https://youtu.be/D-l51PBAx4I</a>
 <p>
