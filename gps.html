@@ -1917,10 +1917,13 @@ function updateLassoPanel(msg) {
     lassoPanel.style.display = 'block';
     const n = lassoSelected.length;
     document.getElementById('lasso-count').textContent = n === 0 ? 'No photos selected yet' : n + (n === 1 ? ' photo selected total' : ' photos selected total');
-    document.getElementById('lasso-src').textContent = lassoSrcHandle ? '1. Source: ' + lassoSrcHandle.name + ' (OK)' : '1. Source: pick the folder with gps.html';
+    // Chrome names the top level of a drive "\" (or ""), which reads badly as a label
+    const srcName = lassoSrcHandle ? (['\\', '/', ''].includes(lassoSrcHandle.name) ? 'drive root' : lassoSrcHandle.name) : '';
+    document.getElementById('lasso-src').textContent = lassoSrcHandle ? '1. Source: ' + srcName + ' (OK)' : '1. Source: pick the folder with gps.html';
     document.getElementById('lasso-copy').disabled = (n === 0 || lassoCopying);
-    document.getElementById('lasso-status').textContent = msg ||
-        'Step 1 (once per session): pick the SOURCE folder — the one that already contains gps.html and your photos. Draw a box, then use "Select more photos" to add another box. Step 2 is the DESTINATION you\'re copying into.';
+    document.getElementById('lasso-status').textContent = msg || (folderMode ?
+        'Step 1 is already done: photos are copied from the photo folder you opened (' + srcName + '). Draw a box, then use "Select more photos" to add another box. Step 2 is the DESTINATION you\'re copying into.' :
+        'Step 1 (once per session): pick the SOURCE folder — the one that already contains gps.html and your photos. Draw a box, then use "Select more photos" to add another box. Step 2 is the DESTINATION you\'re copying into.');
 }
 
 function clearLasso() {
@@ -2042,7 +2045,9 @@ document.getElementById('lasso-copy').addEventListener('click', async () => {
 
     // Check that the chosen photo folder really holds the photos before asking for a destination
     try { await lassoGetFile(lassoSelected[0]); }
-    catch (err) { updateLassoPanel(err.message + ' Make sure "1. Source" points at the folder that already contains gps.html and your original photos — not the destination folder. If a folder was genuinely renamed since scanning, rescan with gathergps.html.'); return; }
+    catch (err) { updateLassoPanel(err.message + (folderMode ?
+        ' The opened photo folder no longer matches gpstagged.txt. If photos were moved or renamed since scanning, rescan with gathergps.html.' :
+        ' Make sure "1. Source" points at the folder that already contains gps.html and your original photos — not the destination folder. If a folder was genuinely renamed since scanning, rescan with gathergps.html.')); return; }
 
     let dst;
     try { dst = await window.showDirectoryPicker({ id: 'gpspix-dest', mode: 'readwrite' }); }
