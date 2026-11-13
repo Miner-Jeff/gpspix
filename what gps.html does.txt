@@ -5,7 +5,7 @@ It is also useful to feed into an AI along with gps.html to help prime the API f
 
 The file "gps.html" is a HTML file containing a javascript program for browsing through tousands of GPS-tagged images by coordinates.
 
-The program uses a previously generated "gpstagged.js" for a list of images to display.  "gpstagged.js" defines a list as follows, with four lines for each image consisting of a relative URL path to the image, Date/Time, Decimal Latitude and Longitude, and camera model.  Subsequent entries are separated by a blank line.
+The program uses a previously generated "gpstagged.txt" for a list of images to display.  "gpstagged.txt" defines a list as follows, with four lines for each image consisting of a relative URL path to the image, Date/Time, Decimal Latitude and Longitude, and camera model.  Subsequent entries are separated by a blank line.
 
 const rawImageData = `
 2011/August/Margaret's BBQ/0822-201210_donald.jpg

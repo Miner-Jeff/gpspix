@@ -10,7 +10,7 @@
 
 <p>The program is intended to be run locally on your computer; all you need is the <code>gps.html</code> and <code>gathergps.html</code> files placed into the root directory of your photo collection.</p>
 
-<p>Scanning thousands of files every time <code>gps.html</code> is opened would take very long. Instead, <code>gps.html</code> loads a file <code>gpstagged.js</code> containing pre-gathered metadata for all images. This file is created by <code>gathergps.html</code>. Due to various security limitations of HTML / JavaScript, <code>gathergps.html</code> needs you to browse to the root of your image tree. After gathering all the metadata, it will create <code>gpstagged.js</code> in your downloads folder. You must then move this file to the root images directory, in the same directory as <code>gps.html</code>.</p>
+<p>Scanning thousands of files every time <code>gps.html</code> is opened would take very long. Instead, <code>gps.html</code> loads a file <code>gpstagged.txt</code> containing pre-gathered metadata for all images. This file is created by <code>gathergps.html</code>. Due to various security limitations of HTML / JavaScript, <code>gathergps.html</code> needs you to browse to the root of your image tree. After gathering all the metadata, it will create <code>gpstagged.txt</code> in your downloads folder. You must then move this file to the root images directory, in the same directory as <code>gps.html</code>.</p>
 
 <p>For his photo collection of 160,000 photos, only 10% have GPS coordinates, and he uses a script <code>gathergps.py</code>, but this Python script assumes the files are organized the way they are on his computer.</p>
 

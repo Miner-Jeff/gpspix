@@ -2,7 +2,7 @@
 # If you aren't familiar with Python, please use gatergps.html instead.
 #
 # This script gathers metadata for all images with GPS coordinates in them
-# and puts the metadta in gpstagged.js, which gps.html loads to get all the picture metadata.
+# and puts the metadta in gpstagged.txt, which gps.html loads to get all the picture metadata.
 #
 # It assumes the photos are organized the way I keep them organized on
 # my computer, with a file "imagedata.cached" in each directory with the metadata already
@@ -14,7 +14,7 @@
 import os
 import re
 
-OUTPUT_FILE = "gpstagged.js"
+OUTPUT_FILE = "gpstagged.txt"
 ROOT_DIR = "."            
 
 # Regex patterns
