@@ -59,6 +59,19 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
 
         #elevCanvas { position: absolute; top: 165px; left: 10px; z-index: 1001; display: none; pointer-events: auto; touch-action: none; }
 
+        /* Altitude zoom / reset buttons: same look as the timeline's, at the top of the elevation slider */
+        #elev-zoom-btn, #elev-reset-btn {
+            position: absolute; top: 167px;
+            color: white; padding: 2px 4px; border-radius: 3px;
+            font-family: sans-serif; font-size: 13px;
+            border: 1px solid white;
+            z-index: 1002; cursor: pointer;
+            pointer-events: auto;
+            display: none; /* Shown by elevUI.updateButtons() */
+        }
+        #elev-zoom-btn { left: 15px; background: #00a000; }
+        #elev-reset-btn { left: 128px; background: #a00000; }
+
         #lasso-btn { position: absolute; bottom: 12px; left: 12px; z-index: 1002; background: #00a000; color: #fff; border: 1px solid #fff; border-radius: 3px; padding: 4px 10px; font: 14px sans-serif; cursor: pointer; }
 
         #zoom-all-btn, #zoom-visible-btn {
@@ -103,6 +116,8 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
 </div>
 
 <canvas id="elevCanvas" width="400" height="108"></canvas>
+<button id="elev-zoom-btn">altitude zoom in</button>
+<button id="elev-reset-btn">Reset altitude</button>
 
 <div id="ui-overlay">
     <img id="preview-img" alt="Preview">
@@ -222,6 +237,11 @@ function saveView() {
     // --- Process 'e' (Elevation filter, meters; ~ separates min and max) ---
     if (elevUI.filterMin !== null || elevUI.filterMax !== null) {
         timeUrlPart += `,e:` + (elevUI.filterMin !== null ? elevUI.filterMin : '') + `~` + (elevUI.filterMax !== null ? elevUI.filterMax : '');
+    }
+
+    // --- Process 'ea' (Elevation scale zoom, meters; ~ separates min and max) ---
+    if (elevUI.isZoomed()) {
+        timeUrlPart += `,ea:` + (elevUI.lockedMin !== null ? Math.floor(elevUI.lockedMin) : '') + `~` + (elevUI.lockedMax !== null ? Math.ceil(elevUI.lockedMax) : '');
     }
 
     if (forceFolderMode) timeUrlPart += ",folder"; // Keep folder mode on reload
@@ -445,7 +465,7 @@ function loadIndex(text, refit) {
         overlayUI.filterStartMs = startOfTimeMs; overlayUI.filterEndMs = endOfTimeMs;
         overlayUI.lockedStartMs = null; overlayUI.lockedEndMs = null;
         overlayUI.markersMovedSinceZoom = false;
-        elevUI.filterMin = null; elevUI.filterMax = null;
+        elevUI.reset();
     }
 
     if (refit || !hasUrlCoordinates) {
@@ -1753,6 +1773,9 @@ const elevUI = {
     maxBinValue: 0,
     axisMin: 0, axisMax: 100, step: 20, // Meters at the left/right ends of the scale, and tick spacing
     filterMin: null, filterMax: null,   // null = no limit on that end
+    lockedMin: null, lockedMax: null,   // Zoomed in scale (meters), null for auto, like the timeline's lock
+    markersMovedSinceZoom: false,       // Decides whether the zoom button zooms in or back out
+    actualMin: 0, actualMax: 100,       // Real elevation extent of the photos in view
     numInScope: 0,   // Images in view that pass the time filter
     numNoAlt: 0,     // Of those, how many have no elevation
     histLeft: 10, histWidth: 380, histBottom: 60, histHeight: 45,
@@ -1783,6 +1806,9 @@ const elevUI = {
         }
         if (lo > hi) { lo = altGlobalMin; hi = altGlobalMax; } // nothing with elevation in view: use overall range
         if (!(lo <= hi)) return;
+        this.actualMin = lo; this.actualMax = hi;
+        if (this.lockedMin !== null) lo = this.lockedMin; // Zoomed in: the scale follows the lock, not the photos
+        if (this.lockedMax !== null) hi = this.lockedMax;
         if (hi - lo < 20) { const mid = (lo + hi) / 2; lo = mid - 10; hi = mid + 10; }
         this.step = this.niceStep((hi - lo) / 4);
         this.axisMin = Math.floor(lo / this.step) * this.step;
@@ -1804,7 +1830,44 @@ const elevUI = {
         }
     },
 
+    // Zoom the scale to the range between the green pointers (an unlimited side uses the real extent of the
+    // photos in view), or back out to automatic if already zoomed. Same idea as overlayUI.zoomToggle().
+    zoomToggle: function() {
+        if ((this.lockedMin !== null || this.lockedMax !== null) && !this.markersMovedSinceZoom) {
+            this.lockedMin = null; this.lockedMax = null; // Revert to automatic
+            return true;
+        }
+        const lo = this.filterMin !== null ? this.filterMin : this.actualMin;
+        const hi = this.filterMax !== null ? this.filterMax : this.actualMax;
+        if (!(hi > lo)) return false;
+
+        const visualSpan = (hi - lo) / 0.9; // The chosen range takes 90% of the scale
+        this.lockedMin = lo - visualSpan * 0.05;
+        this.lockedMax = hi + visualSpan * 0.05;
+        this.markersMovedSinceZoom = false;
+        return true;
+    },
+
+    // Back to no filter and an automatic scale.
+    reset: function() {
+        this.filterMin = null; this.filterMax = null;
+        this.lockedMin = null; this.lockedMax = null;
+        this.markersMovedSinceZoom = false;
+    },
+
+    isZoomed: function() { return this.lockedMin !== null || this.lockedMax !== null; },
+
+    updateButtons: function() {
+        const zoomBtn = document.getElementById('elev-zoom-btn');
+        const resetBtn = document.getElementById('elev-reset-btn');
+        const hasData = altGlobalMin <= altGlobalMax;
+        resetBtn.style.display = (hasData && (this.isFiltered() || this.isZoomed())) ? 'block' : 'none';
+        zoomBtn.style.display = (hasData && this.isFiltered()) ? 'block' : 'none';
+        zoomBtn.textContent = (this.isZoomed() && !this.markersMovedSinceZoom) ? 'altitude zoom out' : 'altitude zoom in';
+    },
+
     setFilterFromX: function(drag, mouseX) {
+        this.markersMovedSinceZoom = true;
         const span = this.axisMax - this.axisMin;
         const ratio = Math.min(1, Math.max(0, (mouseX - this.histLeft) / this.histWidth));
         const target = this.axisMin + ratio * span;
@@ -1816,9 +1879,13 @@ const elevUI = {
             const v = Math.max(target, (this.filterMin === null ? this.axisMin : this.filterMin) + gap);
             this.filterMax = (v >= this.axisMax - span * 0.02) ? null : Math.round(v);
         }
+        // Dragging a pointer to the end of the scale means "no limit": let that end of the scale go back to automatic
+        if (this.filterMin === null) this.lockedMin = null;
+        if (this.filterMax === null) this.lockedMax = null;
     },
 
     draw: function() {
+        this.updateButtons();
         if (!(altGlobalMin <= altGlobalMax)) { elevCanvas.style.display = 'none'; return; } // no elevation data
         elevCanvas.style.display = 'block';
         const c = elevCtx, span = this.axisMax - this.axisMin;
@@ -1904,6 +1971,16 @@ elevCanvas.addEventListener('pointermove', e => {
 });
 ['pointerup', 'pointercancel'].forEach(t => elevCanvas.addEventListener(t, () => { activeElevDrag = null; }));
 elevCanvas.addEventListener('dblclick', () => { elevUI.filterMin = null; elevUI.filterMax = null; updateVisibleData(); }); // reset
+
+document.getElementById('elev-zoom-btn').addEventListener('click', e => {
+    e.stopPropagation(); // Don't let the click bleed through to the map
+    if (elevUI.zoomToggle()) updateVisibleData();
+});
+document.getElementById('elev-reset-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    elevUI.reset();
+    updateVisibleData();
+});
 
 // --- WINDOW (BOX) SELECT + COPY THE SELECTED PHOTOS TO A FOLDER ---
 const lassoBtn = document.getElementById('lasso-btn');
@@ -2566,6 +2643,12 @@ function parseUrlParameters() {
     if (eMatch) {
         if (eMatch[1]) elevUI.filterMin = parseInt(eMatch[1], 10);
         if (eMatch[2]) elevUI.filterMax = parseInt(eMatch[2], 10);
+    }
+
+    const eaMatch = search.match(/,ea:(-?\d*)~(-?\d*)/);
+    if (eaMatch) {
+        if (eaMatch[1]) elevUI.lockedMin = parseInt(eaMatch[1], 10);
+        if (eaMatch[2]) elevUI.lockedMax = parseInt(eaMatch[2], 10);
     }
 
     updateLatScale(view.latHeight);

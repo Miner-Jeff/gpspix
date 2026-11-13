@@ -47,6 +47,8 @@
 
 <p>There is also an altitude slider on the side of the map view. You can use this slider to filter and restrict displayed photos based on their altitude or elevation above sea level. This is especially useful for filtering out high-altitude or low-altitude data points when reviewing aerial or drone imagery.</p>
 
+<p>Once you have moved the green pointers inward, an <b>altitude zoom in</b> button appears above the slider. It stretches the altitude scale so the range between the pointers fills the slider, which makes fine adjustments easy; the same button then becomes <b>altitude zoom out</b>. <b>Reset altitude</b> removes the filter and returns to the automatic scale. These work like the <b>time zoom in</b> and <b>Reset timeline</b> buttons on the time scale.</p>
+
 <hr>
 
 <h3>Selection Window & Selected Photos</h3>
