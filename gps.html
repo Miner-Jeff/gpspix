@@ -266,11 +266,17 @@ const recentFolders = {
             return rows.sort((a, b) => b.used - a.used);
         } catch (e) { return []; } // IndexedDB unavailable: just no recent list
     },
-    async remember(handle) {
+    async remember(handle, count) {
         try {
             const rows = await this.list();
-            const row = { name: handle.name, handle: handle, used: Date.now() };
-            for (const r of rows) { if (await r.handle.isSameEntry(handle)) { row.id = r.id; break; } }
+            const row = { name: handle.name, handle: handle, used: Date.now(), count: count };
+            for (const r of rows) {
+                if (await r.handle.isSameEntry(handle)) {
+                    row.id = r.id;
+                    if (!count) row.count = r.count; // gathergps doesn't know the count: keep the last one seen
+                    break;
+                }
+            }
             const db = await this.db();
             await new Promise((resolve, reject) => {
                 const tx = db.transaction('folders', 'readwrite');
@@ -313,7 +319,10 @@ async function showFolderPrompt(note) {
     box.appendChild(title);
     rows.forEach(row => {
         const b = document.createElement('button');
-        b.textContent = row.name;
+        // Every drive's top level is called "\", so add the photo count and date to tell folders apart
+        const shownName = ['\\', '/', ''].includes(row.name) ? 'drive root' : row.name;
+        const extra = [row.count ? row.count + ' photos' : '', 'last used ' + new Date(row.used).toLocaleDateString()].filter(Boolean).join(', ');
+        b.textContent = shownName + '   (' + extra + ')';
         b.onclick = () => openPhotoFolder(row.handle, row.id);
         box.appendChild(b);
     });
@@ -350,7 +359,7 @@ async function openPhotoFolder(handle, rowId) {
         lassoSrcHandle = handle; // The box-select copy feature can use the same folder as its source
         document.getElementById('folder-prompt').style.display = 'none';
         document.getElementById('folder-change-btn').style.display = 'block';
-        recentFolders.remember(handle);
+        recentFolders.remember(handle, count);
     } catch (e) {
         if (e.name === 'NotFoundError' && rowId !== undefined) {
             await recentFolders.forget(rowId);
