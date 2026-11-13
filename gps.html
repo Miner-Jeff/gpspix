@@ -82,6 +82,15 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
         #preview-img { width: 320px; height: 240px; object-fit: contain; background: #111; border-radius: 4px; cursor: pointer; }
         #info-text { margin-top: 10px; font-size: 13px; color: #111; line-height: 1.5; white-space: pre-wrap; }
         .link-text { cursor: pointer; color: #0056b3; text-decoration: underline; padding: 2px 0; display: inline-block; }
+
+        #folder-prompt { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 3000; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.78); }
+        #folder-card { width: 420px; max-width: 90vw; background: #fff; padding: 18px 24px 20px; border-radius: 6px; font: 14px sans-serif; color: #111; line-height: 1.45; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+        #folder-card h2 { margin: 0 0 8px; font-size: 20px; }
+        #folder-card button { margin: 6px 6px 0 0; padding: 6px 12px; font: 14px sans-serif; cursor: pointer; }
+        #folder-recent-title { margin-top: 12px; font-weight: bold; }
+        #folder-recent button { display: block; width: 100%; text-align: left; }
+        #folder-status { margin-top: 10px; color: #a00000; }
+        #folder-change-btn { position: absolute; bottom: 12px; right: 190px; z-index: 1002; display: none; background: #00a000; color: #fff; border: 1px solid #fff; border-radius: 3px; padding: 4px 10px; font: 14px sans-serif; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -115,6 +124,16 @@ Feb - Sept 2026 Matthias Wandel + Google Gemini.
 <button id="lasso-btn">Select area</button>
 <button id="zoom-visible-btn">Zoom to visible photos</button>
 <button id="zoom-all-btn">Zoom to all photos</button>
+<button id="folder-change-btn">Change folder</button>
+<div id="folder-prompt">
+    <div id="folder-card">
+        <h2>GPSpix</h2>
+        <div>Choose the top-level folder of your photo collection. It must contain the <code>gpstagged.txt</code> made by gathergps.html. gps.html does not need to be copied into the folder.</div>
+        <div id="folder-recent"></div>
+        <button id="folder-pick">Choose photo folder...</button><button id="folder-close">Cancel</button>
+        <div id="folder-status"></div>
+    </div>
+</div>
 <div id="lasso-panel">
     <b id="lasso-count"></b><br>
     <button id="lasso-src">1. Source: pick the folder with gps.html</button><br>
@@ -162,6 +181,7 @@ let view = {
 updateLatScale(view.latHeight)
 
 function saveView() {
+    if (!indexLoaded) return; // Nothing loaded yet: don't write the placeholder view into the URL
     // Scale is simple: total vertical meters
     const heightInMeters = Math.round(view.latHeight * 111120);
 
@@ -204,44 +224,244 @@ function saveView() {
         timeUrlPart += `,e:` + (elevUI.filterMin !== null ? elevUI.filterMin : '') + `~` + (elevUI.filterMax !== null ? elevUI.filterMax : '');
     }
 
+    if (forceFolderMode) timeUrlPart += ",folder"; // Keep folder mode on reload
+
     // Update the browser URL without reloading the page
     const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?" + locValue + timeUrlPart;
     history.replaceState(null, '', newUrl);
 
 }
 
+// --- FOLDER MODE ---
+// Classic mode: gps.html sits in the photo folder, and loads gpstagged.txt and the photos by relative path.
+// Folder mode: gps.html lives anywhere. It asks for the photo folder (Chrome / Edge), then reads
+// gpstagged.txt and the photos through that folder, so nothing has to be copied into the photo folder.
+// Folder mode is used when gpstagged.txt didn't load next to gps.html, or when the URL has "folder" in it.
+let forceFolderMode = false; // "folder" in the URL query, set by the launcher
+let folderMode = false;      // Currently reading photos through photoDirHandle
+let photoDirHandle = null;
+let indexLoaded = false;
+const BLANK_GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+// Recently used photo folders. The browser lets a page keep a folder handle in IndexedDB,
+// so the next visit only needs one click to re-grant access instead of browsing for the folder.
+const recentFolders = {
+    db() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('gpspix', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('folders', { keyPath: 'id', autoIncrement: true });
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    },
+    async list() {
+        try {
+            const db = await this.db();
+            const rows = await new Promise((resolve, reject) => {
+                const r = db.transaction('folders').objectStore('folders').getAll();
+                r.onsuccess = () => resolve(r.result);
+                r.onerror = () => reject(r.error);
+            });
+            db.close();
+            return rows.sort((a, b) => b.used - a.used);
+        } catch (e) { return []; } // IndexedDB unavailable: just no recent list
+    },
+    async remember(handle) {
+        try {
+            const rows = await this.list();
+            const row = { name: handle.name, handle: handle, used: Date.now() };
+            for (const r of rows) { if (await r.handle.isSameEntry(handle)) { row.id = r.id; break; } }
+            const db = await this.db();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('folders', 'readwrite');
+                const store = tx.objectStore('folders');
+                store.put(row);
+                rows.filter(r => r.id !== row.id).slice(5).forEach(r => store.delete(r.id)); // keep 6 at most
+                tx.oncomplete = resolve;
+                tx.onerror = () => reject(tx.error);
+            });
+            db.close();
+        } catch (e) { console.warn('Could not remember folder', e); }
+    },
+    async forget(id) {
+        try {
+            const db = await this.db();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('folders', 'readwrite');
+                tx.objectStore('folders').delete(id);
+                tx.oncomplete = resolve;
+                tx.onerror = () => reject(tx.error);
+            });
+            db.close();
+        } catch (e) { /* ignore */ }
+    }
+};
+
+function setFolderStatus(msg) { document.getElementById('folder-status').textContent = msg || ''; }
+
+async function showFolderPrompt(note) {
+    document.getElementById('folder-prompt').style.display = 'flex';
+    document.getElementById('folder-close').style.display = indexLoaded ? 'inline-block' : 'none';
+    setFolderStatus(note);
+    const box = document.getElementById('folder-recent');
+    box.textContent = '';
+    const rows = await recentFolders.list();
+    if (rows.length === 0) return;
+    const title = document.createElement('div');
+    title.id = 'folder-recent-title';
+    title.textContent = 'Recent folders';
+    box.appendChild(title);
+    rows.forEach(row => {
+        const b = document.createElement('button');
+        b.textContent = row.name;
+        b.onclick = () => openPhotoFolder(row.handle, row.id);
+        box.appendChild(b);
+    });
+}
+
+// gpstagged.txt is a JavaScript file holding one template string: take the text between the backticks.
+function indexTextToData(text) {
+    const a = text.indexOf('`'), b = text.lastIndexOf('`');
+    return (a >= 0 && b > a) ? text.slice(a + 1, b) : text;
+}
+
+async function openPhotoFolder(handle, rowId) {
+    try {
+        if (await handle.queryPermission({ mode: 'read' }) !== 'granted' &&
+            await handle.requestPermission({ mode: 'read' }) !== 'granted') {
+            setFolderStatus('Permission to read "' + handle.name + '" was not granted.');
+            return;
+        }
+        let text;
+        try {
+            text = await (await (await handle.getFileHandle('gpstagged.txt')).getFile()).text();
+        } catch (e) {
+            setFolderStatus('There is no gpstagged.txt in "' + handle.name + '". Run gathergps.html on this folder first.');
+            return;
+        }
+        const wasLoaded = indexLoaded;
+        const count = loadIndex(indexTextToData(text), wasLoaded);
+        if (count === 0) {
+            setFolderStatus('gpstagged.txt in "' + handle.name + '" has no photos with GPS coordinates.');
+            return;
+        }
+        folderMode = true;
+        photoDirHandle = handle;
+        lassoSrcHandle = handle; // The box-select copy feature can use the same folder as its source
+        document.getElementById('folder-prompt').style.display = 'none';
+        document.getElementById('folder-change-btn').style.display = 'block';
+        recentFolders.remember(handle);
+    } catch (e) {
+        if (e.name === 'NotFoundError' && rowId !== undefined) {
+            await recentFolders.forget(rowId);
+            showFolderPrompt('That folder no longer exists.');
+        } else {
+            setFolderStatus('Could not open "' + handle.name + '": ' + e.message);
+        }
+    }
+}
+
+document.getElementById('folder-pick').addEventListener('click', async () => {
+    try {
+        const handle = await window.showDirectoryPicker({ id: 'gpspix-photos', mode: 'read' });
+        await openPhotoFolder(handle);
+    } catch (e) {
+        if (e.name !== 'AbortError') setFolderStatus('Could not open the folder: ' + e.message);
+    }
+});
+document.getElementById('folder-close').addEventListener('click', () => { document.getElementById('folder-prompt').style.display = 'none'; });
+document.getElementById('folder-change-btn').addEventListener('click', e => { e.stopPropagation(); showFolderPrompt(); });
+
+// Photos in folder mode have no URL, so each one is read from the folder and shown through a temporary blob URL.
+let previewToken = 0;     // Lets a slow load be dropped if the mouse has already moved on
+let previewBlobUrl = null;
+
+async function showFolderPhoto(img) {
+    const token = ++previewToken;
+    const parts = img.path.replace(/\\/g, '/').split('/').filter(part => part && part !== '.');
+    const fileName = parts.pop();
+    let file = null;
+    if (thumbnailSubdir) { // Use the small thumbnail if the collection has them
+        try { file = await getFileFromDir(photoDirHandle, parts.concat(thumbnailSubdir.replace(/\/+$/, ''), fileName).join('/')); } catch (e) { /* fall back to the full image */ }
+    }
+    if (!file) {
+        try { file = await getFileFromDir(photoDirHandle, img.path); }
+        catch (e) { if (token === previewToken) previewImg.src = BLANK_GIF; return; }
+    }
+    if (token !== previewToken) return;
+    const url = URL.createObjectURL(file);
+    previewImg.src = url;
+    if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = url;
+}
+
+async function openFolderPhoto(img) {
+    const win = window.open('', '_blank'); // Opened straight away so the popup blocker still sees the click
+    try {
+        const file = await getFileFromDir(photoDirHandle, img.path);
+        if (win) win.location.href = URL.createObjectURL(file);
+    } catch (err) {
+        if (win) win.close();
+        alert(err.message);
+    }
+}
+
 // --- DATA LOADING ---
 function initData() {
     baseMap.init(); // Load basemaps
-    // Alert the user if gpstagged.txt (containing rawImageData) is missing
-    if (typeof rawImageData !== 'undefined') {
-        parseData(rawImageData);
-
-        if (!hasUrlCoordinates && images.length > 0) {
-            // Figure out some default coordinates to use.
-
-            // Find the 5% and 95% longitude bounds
-            const lon5 = images[Math.floor(images.length * 0.05)].lon;
-            const lon95 = images[Math.min(images.length - 1, Math.floor(images.length * 0.95))].lon;
-
-            view.lon = (lon5 + lon95) / 2; // Center view's longitude betwen 9 and 95% bounds
-
-            // For latitude center, computer average latitude
-            let sumLat = 0;
-            for (let i = 0; i < images.length; i++) sumLat += images[i].lat;
-            view.lat = sumLat / images.length;
-
-            // Compute view.latHeight to fit the longitude spread & ensure minimum width
-            const lonWidth = Math.max(0.001, lon95 - lon5);
-
-            // Convert longitude width to latitude height using window aspect ratio and Mercator distortion
-            view.latHeight = lonWidth * Math.cos(view.lat * Math.PI / 180) * (window.innerHeight / window.innerWidth);
-        }
-
-        updateVisibleData();
+    if (!forceFolderMode && typeof rawImageData !== 'undefined') {
+        loadIndex(rawImageData, false); // Classic mode: gpstagged.txt loaded from next to gps.html
+    } else if (window.showDirectoryPicker) {
+        showFolderPrompt();
     } else {
-        alert("gpstagged.txt not found.\nPlease run gathergps.html and copy gpstagged.txt to the root of your images directory, same directory as gps.html");
+        alert("gpstagged.txt not found.\nPlease run gathergps.html and copy gpstagged.txt to the root of your images directory, same directory as gps.html.\n(Or use Chrome or Edge, which can pick the photo folder directly.)");
     }
+}
+
+// Parses the index text and shows it. Returns the number of photos found.
+// refit is true when switching to another photo folder: restart from a clean view of the new photos.
+function loadIndex(text, refit) {
+    altGlobalMin = Infinity; altGlobalMax = -Infinity;
+    selectedImage = null; currentPreview = null;
+    lassoSelected = []; lassoBoxes = [];
+    lassoPanel.style.display = 'none';
+    uiOverlay.style.display = 'none';
+    overlayUI.selectedTimeMs = 0;
+
+    parseData(text);
+    if (images.length === 0) return 0;
+    indexLoaded = true;
+
+    if (refit) { // The old folder's time and elevation filters would hide the new folder's photos
+        overlayUI.filterStartMs = startOfTimeMs; overlayUI.filterEndMs = endOfTimeMs;
+        overlayUI.lockedStartMs = null; overlayUI.lockedEndMs = null;
+        overlayUI.markersMovedSinceZoom = false;
+        elevUI.filterMin = null; elevUI.filterMax = null;
+    }
+
+    if (refit || !hasUrlCoordinates) {
+        // Figure out some default coordinates to use.
+
+        // Find the 5% and 95% longitude bounds
+        const lon5 = images[Math.floor(images.length * 0.05)].lon;
+        const lon95 = images[Math.min(images.length - 1, Math.floor(images.length * 0.95))].lon;
+
+        view.lon = (lon5 + lon95) / 2; // Center view's longitude betwen 9 and 95% bounds
+
+        // For latitude center, computer average latitude
+        let sumLat = 0;
+        for (let i = 0; i < images.length; i++) sumLat += images[i].lat;
+        view.lat = sumLat / images.length;
+
+        // Compute view.latHeight to fit the longitude spread & ensure minimum width
+        const lonWidth = Math.max(0.001, lon95 - lon5);
+
+        // Convert longitude width to latitude height using window aspect ratio and Mercator distortion
+        view.latHeight = lonWidth * Math.cos(view.lat * Math.PI / 180) * (window.innerHeight / window.innerWidth);
+    }
+
+    updateVisibleData();
+    return images.length;
 }
 
 function parseData(text) {
@@ -1766,10 +1986,13 @@ document.getElementById('lasso-src').addEventListener('click', async () => {
     } catch (err) { /* cancelled */ }
 });
 
-async function lassoGetFile(img) {
-    const parts = img.path.replace(/\\/g, '/').split('/').filter(part => part && part !== '.');
-    let dir = lassoSrcHandle;
-    let parentLabel = lassoSrcHandle.name;
+function lassoGetFile(img) { return getFileFromDir(lassoSrcHandle, img.path); }
+
+// Finds a photo by its relative path inside a folder handle (tolerates small case / whitespace changes).
+async function getFileFromDir(root, relPath) {
+    const parts = relPath.replace(/\\/g, '/').split('/').filter(part => part && part !== '.');
+    let dir = root;
+    let parentLabel = root.name;
 
     const listChildren = async (dirHandle, kind) => {
         const names = [];
@@ -1877,7 +2100,9 @@ function updateOverlay(img) {
         previewImg.onerror = null;
     };
 
-    {
+    if (folderMode) {
+        showFolderPhoto(currentPreview);
+    } else {
         previewImg.src = currentPreview.path.replace(/\\/g, '/');
         // thumbnailSubdir has name of subdirectory for thumbnails, or "" if no thumbnails exist.
         let parts = previewImg.src.split('/');
@@ -1897,6 +2122,7 @@ function updateOverlay(img) {
     };
 
     addLink(img.path, () => {
+        if (folderMode) { openFolderPhoto(img); return; } // No folder page to link to: open the photo itself
         let p = img.path.replace(/\\/g, '/');
         if (thumbnailSubdir == "_small/"){
             // If thumbnails are in "_small/" (my photo collection) then there is
@@ -2151,7 +2377,8 @@ canvas.addEventListener('wheel', e => {
 const openFullImage = (e) => {
     e.stopPropagation();
     if (currentPreview) {
-        window.open(currentPreview.path.replace(/\\/g, '/'), '_blank');
+        if (folderMode) openFolderPhoto(currentPreview);
+        else window.open(currentPreview.path.replace(/\\/g, '/'), '_blank');
     }
 };
 previewImg.onclick = openFullImage;
@@ -2289,6 +2516,8 @@ document.getElementById('reset-timeline-btn').addEventListener('click', (e) => {
 
 function parseUrlParameters() {
     const search = window.location.search;
+
+    if (/[?,]folder(?=,|$)/.test(search)) forceFolderMode = true; // Ask for the photo folder even if a gpstagged.txt sits next to gps.html
 
     // Get URL lat/lon/scale
     const geoMatch = search.match(/@([\d.-]+),([\d.-]+)(?:,([\d.]+)([mz]))?/);

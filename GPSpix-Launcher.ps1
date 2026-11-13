@@ -1,6 +1,8 @@
 # GPSpix Launcher
-# Lets you pick a photo folder, copies gps.html and gathergps.html into it,
-# runs the scan, moves gpstagged.txt into place, and opens the map.
+# Lets you pick a photo folder, runs the scan (gathergps.html) so gpstagged.txt is written
+# into that folder, and opens the map (gps.html).
+# Nothing is copied into your photo folder except the gpstagged.txt index file:
+# gps.html and gathergps.html stay here and read the photo folder through the browser.
 # Keep this file in the same folder as your master gps.html and gathergps.html.
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -12,17 +14,24 @@ function Show-Msg($text, $buttons = 'OK', $icon = 'Information') {
     return [System.Windows.Forms.MessageBox]::Show($text, 'GPSpix Launcher', $buttons, $icon)
 }
 
-function Open-Page($path) {
-    # Prefer Chrome if installed, otherwise use the default browser
-    $chrome = @(
+function Get-Browser {
+    # Chrome first, then Edge: both can read and write a folder you pick
+    @(
         "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
         "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-        "$env:LocalAppData\Google\Chrome\Application\chrome.exe"
+        "$env:LocalAppData\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 
-    if ($chrome) {
-        Start-Process -FilePath $chrome -ArgumentList ('"' + $path + '"')
+function Open-Page($path, $query = '') {
+    $browser = Get-Browser
+    if ($browser) {
+        $url = ([System.Uri]$path).AbsoluteUri + $query
+        Start-Process -FilePath $browser -ArgumentList ('"' + $url + '"')
     } else {
+        # No Chrome or Edge found: use the default browser (the folder picking needs Chrome or Edge)
         Start-Process -FilePath $path
     }
 }
@@ -42,18 +51,7 @@ $dlg.ShowNewFolderButton = $false
 if ($dlg.ShowDialog() -ne 'OK') { exit 0 }
 $target = $dlg.SelectedPath
 
-# 3. Copy the two files (overwrites older copies)
-try {
-    foreach ($f in $files) {
-        Copy-Item -Path (Join-Path $srcDir $f) -Destination $target -Force -ErrorAction Stop
-    }
-} catch {
-    Show-Msg "Could not copy files to:`n$target`n`n$($_.Exception.Message)" 'OK' 'Error' | Out-Null
-    exit 1
-}
-Write-Host "Copied gps.html and gathergps.html to $target"
-
-# 4. Decide whether to scan
+# 3. Decide whether to scan
 $index = Join-Path $target 'gpstagged.txt'
 $scan  = $true
 if (Test-Path $index) {
@@ -62,7 +60,7 @@ if (Test-Path $index) {
     if ($ans -eq 'No') { $scan = $false }
 }
 
-# 5. Run the scan and move gpstagged.txt into the photo folder
+# 4. Run the scan; gpstagged.txt ends up in the photo folder
 if ($scan) {
     try {
         $downloads = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
@@ -71,7 +69,7 @@ if ($scan) {
     }
 
     $start = Get-Date
-    Open-Page (Join-Path $target 'gathergps.html')
+    Open-Page (Join-Path $srcDir 'gathergps.html')
 
     Write-Host ''
     Write-Host 'In the browser page that just opened:'
@@ -97,7 +95,7 @@ if ($scan) {
     }
 
     if (-not $found -and -not $savedDirect) {
-        Show-Msg "gpstagged.txt was not found in your photo folder or in:`n$downloads`n`nIf your browser saved it somewhere else, move it into:`n$target`nthen open gps.html there." 'OK' 'Warning' | Out-Null
+        Show-Msg "gpstagged.txt was not found in your photo folder or in:`n$downloads`n`nIf your browser saved it somewhere else, move it into:`n$target`nthen run this launcher again and answer No to rescanning." 'OK' 'Warning' | Out-Null
         exit 1
     }
 
@@ -111,6 +109,8 @@ if ($scan) {
     }
 }
 
-# 6. Open the map
-Open-Page (Join-Path $target 'gps.html')
+# 5. Open the map. "?folder" makes gps.html ask for the photo folder, so it never
+#    needs to be copied into it (and ignores any gpstagged.txt sitting next to gps.html).
+Open-Page (Join-Path $srcDir 'gps.html') '?folder'
 Write-Host 'Done. The map should be opening in your browser.'
+Write-Host "In the map, pick '$target' (or click it under Recent folders)."

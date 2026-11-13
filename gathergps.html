@@ -537,6 +537,38 @@ function readRationalTriple(view, offset, lEnd) {
     return vals;
 }
 
+// Keeps the scanned folder in the browser's IndexedDB (same database gps.html reads), so the map can offer it again.
+async function rememberFolder(handle) {
+    try {
+        const open = () => new Promise((resolve, reject) => {
+            const req = indexedDB.open('gpspix', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('folders', { keyPath: 'id', autoIncrement: true });
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        let db = await open();
+        const rows = await new Promise((resolve, reject) => {
+            const r = db.transaction('folders').objectStore('folders').getAll();
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        db.close();
+        rows.sort((a, b) => b.used - a.used);
+        const row = { name: handle.name, handle: handle, used: Date.now() };
+        for (const r of rows) { if (await r.handle.isSameEntry(handle)) { row.id = r.id; break; } }
+        db = await open();
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction('folders', 'readwrite');
+            const store = tx.objectStore('folders');
+            store.put(row);
+            rows.filter(r => r.id !== row.id).slice(5).forEach(r => store.delete(r.id));
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+    } catch (e) { console.warn('Could not remember folder', e); }
+}
+
 async function finalizeExport() {
     updateStats();
     if (statusText) statusText.innerText = "Packaging local coordinate string database...";
@@ -553,45 +585,12 @@ async function finalizeExport() {
             await writable.write(finalContent);
             await writable.close();
 
-            let extraNoticeHtml = "";
-            const isServer = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+            // gps.html does not have to be copied into the photo folder: it can ask for the folder
+            // itself. Remember this folder so gps.html offers it as a one-click "recent folder".
+            await rememberFolder(targetDirectoryHandle);
 
-            // Automatic deployment for gps.html and gathergps.html if possible (google chrom + from https://)
-            if (isServer) {
-                let copiedFiles = [];
-                const deploymentFiles = ['gps.html', 'gathergps.html'];
-
-                for (const filename of deploymentFiles) {
-                    try {
-                        // Check if the file already exists in the destination
-                        await targetDirectoryHandle.getFileHandle(filename);
-                    } catch (e) {
-                        // File is missing, attempt to fetch and save it
-                        try {
-                            const response = await fetch(filename);
-                            if (response.ok) {
-                                const content = await response.text();
-                                const handle = await targetDirectoryHandle.getFileHandle(filename, { create: true });
-                                const writable = await handle.createWritable();
-                                await writable.write(content);
-                                await writable.close();
-                                copiedFiles.push(filename);
-                            }
-                        } catch (err) {
-                            console.warn(`Could not fetch or write ${filename}`, err);
-                        }
-                    }
-                }
-
-                if (copiedFiles.length > 0) {
-                    const fileString = copiedFiles.map(f => `<code>${f}</code>`).join(' and ');
-                    extraNoticeHtml += `<br><br>${fileString} were also copied to your selected photo directory. Just go to your photo directory tree and click on gps.html.<br>
-                    For future re-indexing, you can click on gathergps.html in that same folder`;
-                }
-            }
-
-            // --- Final Verification Fallback ---
-            // Always check if gps.html is present, warn if it is still missing
+            // Only if a copy of gps.html already sits in the photo folder (the older way of
+            // working) does the map link keep opening it as a plain page.
             let hasGpsHtml = false;
             try {
                 await targetDirectoryHandle.getFileHandle('gps.html');
@@ -599,19 +598,16 @@ async function finalizeExport() {
             } catch (e) {
                 hasGpsHtml = false;
             }
-
-            if (!hasGpsHtml) {
-                extraNoticeHtml += "<br><br><strong>gps.html still needs to be manually copied to the root of your photo directory tree.</strong>";
-            }
+            const mapLink = hasGpsHtml ? 'gps.html' : 'gps.html?folder';
 
             // Render dynamic completion UI for Chromium
             dynamicView.innerHTML = `
                 <div class="instructions" style="background-color: #d4edda; border-left-color: #28a745; color: #155724;">
                 <strong><big>Completed</big><p>
                 Your <code>gpstagged.txt</code> metadata index file has been created and saved to your images directory.</strong>
-                ${extraNoticeHtml}
+                ${hasGpsHtml ? '' : '<br><br>Nothing else was copied there. When the map asks for a photo folder, choose the same folder (it will also be listed under recent folders).'}
                 </div>
-                ${hasGpsHtml ? `<p><a href="gps.html" target="_blank" style="display:inline-block; padding:10px 20px; background:#28a745; color:#fff; border-radius:4px; text-decoration:none; font-weight:bold; font-size:16px;">Open the map (gps.html)</a></p>` : ''}
+                <p><a href="${mapLink}" target="_blank" style="display:inline-block; padding:10px 20px; background:#28a745; color:#fff; border-radius:4px; text-decoration:none; font-weight:bold; font-size:16px;">Open the map (gps.html)</a></p>
             `;
 
         } catch (err) {
