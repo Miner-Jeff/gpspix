@@ -176,7 +176,9 @@ dropZone.addEventListener('drop', async (e) => {
 if (isChromium) {
     pickerBtn.addEventListener('click', async () => {
         try {
-            targetDirectoryHandle = await window.showDirectoryPicker();
+            // Ask for write access now: a scan can take minutes, and by the end the browser would
+            // refuse a late permission request and fall back to saving gpstagged.txt in Downloads.
+            targetDirectoryHandle = await window.showDirectoryPicker({ id: 'gpspix-photos', mode: 'readwrite' });
             switchToProcessing();
             await scanModernDirectory(targetDirectoryHandle);
             await finalizeExport();
