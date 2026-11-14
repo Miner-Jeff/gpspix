@@ -14,7 +14,7 @@
 
 <p>In other browsers (Firefox), <code>gathergps.html</code> puts <code>gpstagged.txt</code> in your downloads folder, and you have to use the older method: move it to the root of the photo directory and also put <code>gps.html</code> there, then open that copy. That older method also still works in Chrome and Edge.</p>
 
-<p><b>Windows:</b> <code>GPSpix-Launcher.bat</code> does all of this for you. It asks for the photo folder, runs the scan, and opens the map, without copying any HTML files.</p>
+<p><b>Windows:</b> <code>GPSpix-Launcher.bat</code> does all of this for you. It asks for the photo folder, runs the scan, and opens the map in the same browser tab, without copying any HTML files.</p>
 
 <p>For his photo collection of 160,000 photos, only 10% have GPS coordinates, and he uses a script <code>gathergps.py</code>, but this Python script assumes the files are organized the way they are on his computer.</p>
 

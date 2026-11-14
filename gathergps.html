@@ -113,6 +113,10 @@ const dynamicView = document.getElementById('dynamic-view');
 let processedFiles = 0;
 let outputLines = [];
 let isChromium = typeof window.showDirectoryPicker === 'function';
+// The Windows launcher opens this page with "?launcher". Browsers refuse to let a page close its own tab
+// (only tabs opened by a script), so instead of leaving a finished scan tab behind, this page turns
+// into the map in the same tab once the scan is done.
+const launchedByLauncher = /[?&]launcher(&|$)/.test(window.location.search);
 let targetDirectoryHandle = null;
 let targetDirectoryEntry = null;
 
@@ -611,6 +615,11 @@ async function finalizeExport() {
                 </div>
                 <p><a href="${mapLink}" target="_blank" style="display:inline-block; padding:10px 20px; background:#28a745; color:#fff; border-radius:4px; text-decoration:none; font-weight:bold; font-size:16px;">Open the map (gps.html)</a></p>
             `;
+
+            if (launchedByLauncher) {
+                dynamicView.insertAdjacentHTML('beforeend', '<p style="color:#555;">Opening the map in this tab...</p>');
+                setTimeout(() => { window.location.href = mapLink; }, 1500); // Same tab: nothing is left to close
+            }
 
         } catch (err) {
             console.warn("Direct native drive write rejected, reverting system to manual trigger.", err);

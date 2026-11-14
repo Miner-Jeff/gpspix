@@ -69,7 +69,7 @@ if ($scan) {
     }
 
     $start = Get-Date
-    Open-Page (Join-Path $srcDir 'gathergps.html')
+    Open-Page (Join-Path $srcDir 'gathergps.html') '?launcher'   # "?launcher": the page closes its own tab when done
 
     Write-Host ''
     Write-Host 'In the browser page that just opened:'
@@ -111,6 +111,13 @@ if ($scan) {
 
 # 5. Open the map. "?folder" makes gps.html ask for the photo folder, so it never
 #    needs to be copied into it (and ignores any gpstagged.txt sitting next to gps.html).
-Open-Page (Join-Path $srcDir 'gps.html') '?folder'
-Write-Host 'Done. The map should be opening in your browser.'
+#    When the browser saved the index straight into the photo folder, the scan page
+#    has already turned itself into the map in the same tab (so no scan tab is left
+#    behind to close). Otherwise open the map in a tab of its own.
+if ($savedDirect) {
+    Write-Host 'Done. The scan page is turning into the map in the same browser tab.'
+} else {
+    Open-Page (Join-Path $srcDir 'gps.html') '?folder'
+    Write-Host 'Done. The map should be opening in your browser.'
+}
 Write-Host "In the map, pick '$target' (or click it under Recent folders)."
